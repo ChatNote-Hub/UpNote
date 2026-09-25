@@ -170,7 +170,23 @@ session is authenticated.
 > spot for a bug if login fails against non-demo instances with mixed-case
 > credentials.
 
-### 6. Compression - a real asymmetry between requests and responses
+### 6. Response envelope
+
+Every decrypted/decompressed response body - regardless of whether
+encryption/compression are on - is shaped like:
+
+```json
+{ "data": { /* the actual useful fields */ }, "_Signature_": { /* ... */ } }
+```
+
+mirroring the `{Signature, data}` shape sent in every outgoing request.
+`PronoteSession._process_response` unwraps this and returns `data`
+directly - so e.g. the `Identification` response's `challenge` and `alea`
+fields are accessed as `data["challenge"]`, not
+`data["data"]["challenge"]`. Missing this unwrap step was a real bug (see
+[Changelog](#changelog)).
+
+### 7. Compression - a real asymmetry between requests and responses
 
 Confirmed identically in both `pronotepy` and `Blocksnote`'s source code,
 this is subtle enough to be worth calling out explicitly:
@@ -205,10 +221,17 @@ pronote_wrapper/
   constants.py    - fixed UUIDs, RSA key, NOTSpace enum
   crypto.py       - AES/RSA primitives, key/iv derivation, challenge solving
   session.py      - PronoteSession: HTTP layer, request/response encoding
+  parsing.py      - typed-value unwrapping (_T/V, L/N, dates, number sets)
   client.py       - Instance discovery + full login flow
 tests/
   test_crypto.py  - crypto primitives, incl. the numeroOrdre sanity check
   test_session.py - request/response encoding, mocked HTTP (no network)
+  test_parsing.py - typed-value parser
+examples/
+  crypto_walkthrough.py  - crypto layer only, NO network needed, safe to run anywhere
+  instance_discovery.py  - list the workspaces available on an instance
+  basic_login.py          - full username/password login
+  custom_request.py       - login, then one appelfonction call (ParametresUtilisateur)
 ```
 
 ## Usage
@@ -228,6 +251,27 @@ session = client.login(
 # e.g. session.post("ParametresUtilisateur", {})
 ```
 
+## Examples
+
+```bash
+# No network needed - safe to run anywhere, demonstrates the crypto layer in isolation
+python3 examples/crypto_walkthrough.py
+
+# Needs network - lists available workspaces on an instance
+python3 examples/instance_discovery.py https://demo.index-education.net/pronote/eleve.html
+
+# Needs network - full login against the demo instance
+python3 examples/basic_login.py
+
+# Needs network - login + one authenticated request
+python3 examples/custom_request.py
+```
+
+`crypto_walkthrough.py` has no external dependencies beyond this package
+and runs fully offline; the other three perform real HTTP requests and
+have not been run against a live server yet (see
+[Known limitations](#known-limitations)).
+
 ## Running the tests
 
 No test framework dependency required (pytest wasn't installable in the
@@ -243,12 +287,12 @@ python3 tests/test_session.py
 
 ## Known limitations
 
-- **Never tested against a live server.** This was built entirely in a
-  network-isolated sandbox. The crypto primitives are validated against a
-  known-good sanity-check value from the protocol doc, and the
-  request/response encoding logic is validated by mocking HTTP calls - but
-  nothing here has actually round-tripped through the real
-  `demo.index-education.net` server yet. Treat `client.login(...)` as
+- **Never tested end-to-end against a live server as of writing** beyond
+  the session-opening step below. The crypto primitives are validated
+  against a known-good sanity-check value from the protocol doc, and the
+  request/response encoding logic is validated by mocking HTTP calls, but
+  the full `Identification`/`Authentification` exchange in `client.login`
+  has not yet been confirmed against a real server response. Treat it as
   untested until someone runs it for real.
 - Only username/password login is implemented (no QR code login, no ENT
   login, no mobile app token login).
@@ -257,6 +301,30 @@ python3 tests/test_session.py
   homework, etc.).
 - The `modeCompLog`/`modeCompMdp` handling described above is a known
   simplification.
+
+## Changelog
+
+- **Fixed** (confirmed against the real demo server): `InfoMobileApp.json`
+  returns workspace URLs *without* a leading slash (e.g.
+  `"mobile.eleve.html"`, not `"/mobile.eleve.html"`) - a real, mobile-specific
+  HTML page, different from the desktop `eleve.html`. Combined with
+  `PronoteSession` stripping the instance root's trailing slash, naive
+  string concatenation produced a malformed URL
+  (`.../pronotemobile.eleve.html`, missing the separator) and a 404. Fixed
+  in `PronoteSession.create` by normalizing both sides before joining;
+  locked in by a regression test in `test_session.py`.
+- **Fixed** (confirmed against the real demo server): every decrypted
+  response body is an envelope shaped like `{"data": {...}, "_Signature_":
+  ...}` (mirroring the `{Signature, data}` shape sent in requests) - the
+  useful fields (e.g. `challenge`, `alea`) are one level deeper than what
+  `_process_response` used to return, causing `KeyError: 'challenge'` on
+  `Identification` even though the request/response cycle otherwise worked.
+  Fixed by unwrapping `.data`, and added a proper `parsing.py` module
+  (ported from `structures/parsing/{Parser,DateParser,NumberSet}.ts`) that
+  also handles PRONOTE's typed-value wrappers (`{"_T": ..., "V": ...}`)
+  and the `L`/`N` -> `label`/`id` key renaming, for when this project
+  starts fetching actual data (grades, timetable, ...) rather than just
+  logging in.
 
 ## Legal note
 
