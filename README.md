@@ -1,6 +1,5 @@
 # UpNote
 
-[![Tests](https://github.com/ChatNote-Hub/UpNote/actions/workflows/tests.yml/badge.svg)](https://github.com/ChatNote-Hub/UpNote/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](pyproject.toml)
 
