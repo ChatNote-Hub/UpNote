@@ -44,6 +44,48 @@ def test_parse_unknown_type_code_is_lenient():
     assert parsing.parse({"_T": 999, "V": "whatever"}) == "whatever"
 
 
+def test_js_weekday_uses_sunday_zero_indexing():
+    # 2026-10-04 is a Sunday, 2026-10-05 a Monday, 2026-10-10 a Saturday.
+    assert parsing._js_weekday(datetime(2026, 10, 4)) == 0
+    assert parsing._js_weekday(datetime(2026, 10, 5)) == 1
+    assert parsing._js_weekday(datetime(2026, 10, 10)) == 6
+    assert parsing._FRENCH_DAYS["dimanche"] == 0
+    assert parsing._FRENCH_DAYS["lundi"] == 1
+
+
+def test_short_date_resolves_to_most_recent_matching_weekday():
+    now = datetime.now()
+    names = {v: k for k, v in parsing._FRENCH_DAYS.items()}
+    today_name = names[parsing._js_weekday(now)]
+
+    result = parsing.parse_date(f"{today_name} 08h30")
+
+    assert result.date() == now.date()
+    assert (result.hour, result.minute) == (8, 30)
+
+
+def test_encode_date_has_no_zero_padding():
+    assert parsing.encode_date(datetime(2026, 3, 5, 8, 5, 0)) == "5/3/2026 8:5:0"
+    assert parsing.encode_date(datetime(2026, 12, 25, 23, 59, 58)) == "25/12/2026 23:59:58"
+
+
+def test_encode_helpers_emit_dual_case_keys():
+    assert parsing.encode_value("numeroSemaine", 3) == {"numeroSemaine": 3, "NumeroSemaine": 3}
+    assert parsing.encode_type("dateDebut", 7, "1/1/2026 0:0:0") == {
+        "dateDebut": {"_T": 7, "V": "1/1/2026 0:0:0"},
+        "DateDebut": {"_T": 7, "V": "1/1/2026 0:0:0"},
+    }
+    assert parsing.encode_kind("ressource", 4, "x") == {
+        "ressource": {"G": 4, "N": "x"},
+        "Ressource": {"G": 4, "N": "x"},
+    }
+
+
+def test_encoded_date_round_trips_through_parse():
+    original = datetime(2026, 3, 5, 8, 5, 7)
+    assert parsing.parse(parsing.encode_type("d", 7, parsing.encode_date(original))["d"]) == original
+
+
 if __name__ == "__main__":
     import traceback
 

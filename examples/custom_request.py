@@ -40,7 +40,10 @@ def main() -> None:
         print(f"Request failed: {exc}")
         return
 
-    print(json.dumps(data, indent=2, ensure_ascii=False))
+    # default=str: parsing.py converts PRONOTE's typed date wrappers into
+    # real datetime objects (see parsing.py), which json.dumps can't
+    # serialize natively - stringify anything it doesn't recognize.
+    print(json.dumps(data, indent=2, ensure_ascii=False, default=str))
 
 
 if __name__ == "__main__":

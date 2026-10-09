@@ -56,6 +56,10 @@ class PronoteSession:
 
         self.request_number = 0  # like RequestManager.requestNumber
 
+        # Parsed FonctionParametres response (instance-wide settings such as
+        # the number of time slots per hour), set during login.
+        self.settings: dict = {}
+
     # --- Step 1: opening a session ---------------------------------------
 
     @classmethod

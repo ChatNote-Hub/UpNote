@@ -1,36 +1,43 @@
 """
-Generic parser for PRONOTE's typed value wrappers, mirroring
+Generic parser/encoder for PRONOTE's typed value wrappers, mirroring
 `structures/parsing/{Parser,DateParser,NumberSet}.ts` from Blocksnote.
 
 PRONOTE wraps many response fields as `{"_T": <type_code>, "V": <value>}`
 (numbers, dates, "number sets" like grade scales, nested typed objects...),
 and uses `"L"`/`"N"` as short keys for "label"/"id" on a lot of objects.
-This module undoes both.
+`parse` undoes both. The `encode_*` helpers do the reverse for outgoing
+request payloads.
 
-Not every type code is implemented yet (this project doesn't fetch grades/
-timetable data yet) - unknown type codes are left as-is rather than raising,
-since being lenient here is safer than crashing on a field this project
-doesn't need yet.
+Unknown type codes are left as-is rather than raising, since being lenient
+is safer than crashing on a field this project doesn't need yet.
 """
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
+# JS-style day-of-week indexing (Sunday = 0), exactly like DateParser.ts.
 _FRENCH_DAYS = {
-    "lundi": 0,
-    "mardi": 1,
-    "mercredi": 2,
-    "jeudi": 3,
-    "vendredi": 4,
-    "samedi": 5,
-    "dimanche": 6,
+    "lundi": 1,
+    "mardi": 2,
+    "mercredi": 3,
+    "jeudi": 4,
+    "vendredi": 5,
+    "samedi": 6,
+    "dimanche": 0,
 }
 
 _SHORT_DATE_RE = re.compile(r"^\w+\s\d{2}h\d{2}")
 _SHORT_PRECISE_DATE_RE = re.compile(r"^\w+\s\d{2}/\d{2}")
 
+
+def _js_weekday(dt: datetime) -> int:
+    """Python weekday() is Monday=0..Sunday=6; JS getDay() is Sunday=0..Saturday=6."""
+    return (dt.weekday() + 1) % 7
+
+
+# --- Decoding ----------------------------------------------------------------
 
 def parse_number_set(value: str) -> list[int]:
     """"[1..3,5]" -> [1, 2, 3, 5] (used for grade scales, etc.)."""
@@ -62,7 +69,7 @@ def parse_number_set(value: str) -> list[int]:
 
 
 def parse_date(value: str) -> datetime:
-    """Best-effort port of DateParser.parse - full date, "day HHhMM", or "day DD/MM"."""
+    """Port of DateParser.parse - full date, "day HHhMM", or "day DD/MM"."""
     if _SHORT_DATE_RE.match(value):
         return _parse_short_date(value)
     if _SHORT_PRECISE_DATE_RE.match(value):
@@ -71,23 +78,27 @@ def parse_date(value: str) -> datetime:
 
 
 def _parse_short_precise_date(value: str) -> datetime:
+    """
+    "lundi 14/09" -> a date with no year. Ported as-is from DateParser.ts:
+    months January-September (1-9) resolve to NEXT calendar year, October-
+    December to the current one (school-year logic).
+    """
     now = datetime.now()
     _, rest = value.split(" ", 1)
     day_str, month_str = rest.split("/")[:2]
     day, month = int(day_str), int(month_str)
-    year = now.year + 1 if month > 8 else now.year
+    year = now.year + 1 if month <= 9 else now.year
     return datetime(year, month, day)
 
 
 def _parse_short_date(value: str) -> datetime:
+    """"lundi 14h30" -> the most recent such weekday (today included), at that time."""
     now = datetime.now()
     day_name, hour_part = value.split(" ", 1)
     hour_str, minute_str = hour_part.split("h")
     target_weekday = _FRENCH_DAYS.get(day_name, 0)
-    delta = (now.weekday() - target_weekday + 7) % 7
+    delta = (_js_weekday(now) - target_weekday + 7) % 7
     target = now.replace(hour=int(hour_str), minute=int(minute_str), second=0, microsecond=0)
-    from datetime import timedelta
-
     return target - timedelta(days=delta)
 
 
@@ -142,3 +153,31 @@ def parse(obj: Any) -> Any:
         return _handle_type(o["_T"], o["V"])
 
     return {key: parse(value) for key, value in o.items()}
+
+
+# --- Encoding (outgoing request payloads) ----------------------------------
+
+def encode_date(value: datetime) -> str:
+    """
+    Port of DateParser.encode: "D/M/YYYY H:M:S" with NO zero-padding
+    (e.g. 2026-03-05 08:05:00 -> "5/3/2026 8:5:0"), exactly the wire format.
+    """
+    return f"{value.day}/{value.month}/{value.year} {value.hour}:{value.minute}:{value.second}"
+
+
+def _dual_case_key(key: str, value: Any) -> dict[str, Any]:
+    """PRONOTE expects some fields under both `key` and `Key` - send both."""
+    capitalized = key[:1].upper() + key[1:]
+    return {key: value, capitalized: value}
+
+
+def encode_value(key: str, value: Any) -> dict[str, Any]:
+    return _dual_case_key(key, value)
+
+
+def encode_type(key: str, type_code: int, value: Any) -> dict[str, Any]:
+    return _dual_case_key(key, {"_T": type_code, "V": value})
+
+
+def encode_kind(key: str, kind: int, id_: str) -> dict[str, Any]:
+    return _dual_case_key(key, {"G": kind, "N": id_})

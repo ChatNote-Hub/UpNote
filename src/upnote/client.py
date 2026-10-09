@@ -86,7 +86,7 @@ def login(source: str, username: str, password: str, workspace_type: int = const
     workspace = instance.workspace(workspace_type)
     session = PronoteSession.create(instance.source, workspace)
 
-    _load_settings(session)
+    session.settings = _load_settings(session)
     challenge_hex, seed = _request_identification(session, username)
     _authenticate(session, username, password, challenge_hex, seed)
 
