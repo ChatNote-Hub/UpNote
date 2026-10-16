@@ -6,6 +6,9 @@ USER_AGENT = (
     "Mozilla/5.0 (iPhone; CPU iPhone OS 19_0 like Mac OS X) AppleWebKit/605.1.15 "
     "(KHTML, like Gecko) Mobile/15E148 PRONOTE Mobile APP Version/2.0.11"
 )
+# Plain desktop browser identity, used for the regular (non-mobile) pages that
+# ENT/CAS logins go through. Same string pronotepy sends.
+DESKTOP_USER_AGENT = "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:73.0) Gecko/20100101 Firefox/73.0"
 INFO_MOBILE_ID = "0D264427-EEFC-4810-A9E9-346942A862A4"
 BYPASS_ID = "A6ABB224-12DD-4E31-AD3E-8A39A1C2C335"
 
@@ -27,3 +30,16 @@ class NOTSpace(IntEnum):
     STUDENT = 6
     PARENT = 7
     TEACHER = 8
+
+
+# Page name (without the optional "mobile." prefix and the ".html" suffix)
+# -> workspace type, as listed by InfoMobileApp.json.
+WORKSPACE_PAGES = {
+    "direction": NOTSpace.ADMINISTRATOR,
+    "professeur": NOTSpace.TEACHER,
+    "viescolaire": NOTSpace.SCHOOL_LIFE,
+    "parent": NOTSpace.PARENT,
+    "accompagnant": NOTSpace.ACCOMPANYING,
+    "eleve": NOTSpace.STUDENT,
+    "entreprise": NOTSpace.ENTERPRISE,
+}

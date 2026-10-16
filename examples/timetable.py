@@ -51,7 +51,8 @@ def main() -> None:
             if isinstance(slot, Detention):
                 print(f"  {times}  DETENTION ({slot.state})")
             elif isinstance(slot, Lesson):
-                flag = "  [CANCELED]" if slot.canceled else ""
+                reason = f": {slot.status}" if slot.status else ""
+                flag = f"  [CANCELED{reason}]" if slot.canceled else ""
                 rooms = ", ".join(slot.rooms) or "-"
                 teachers = ", ".join(slot.teachers) or "-"
                 print(f"  {times}  {slot.subject or '?'}  |  {teachers}  |  {rooms}{flag}")

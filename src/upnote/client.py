@@ -8,12 +8,13 @@ from __future__ import annotations
 import base64
 import os
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 from urllib.parse import urlparse
 
 import requests
 
 from . import constants, crypto
+from .ent import EntProvider, cas_provider
 from .session import PronoteError, PronoteSession, Workspace
 
 
@@ -88,7 +89,7 @@ def login(source: str, username: str, password: str, workspace_type: int = const
 
     session.settings = _load_settings(session)
     challenge_hex, seed = _request_identification(session, username)
-    _authenticate(session, username, password, challenge_hex, seed)
+    _authenticate(session, challenge_hex, crypto.generate_temp_key(username, password, seed))
 
     return session
 
@@ -130,7 +131,9 @@ def _load_settings(session: PronoteSession) -> dict:
     return session._process_response(raw)
 
 
-def _request_identification(session: PronoteSession, username: str) -> tuple[str, str]:
+def _request_identification(
+    session: PronoteSession, username: str, *, for_ent: bool = False
+) -> tuple[str, str]:
     data = session.post(
         "Identification",
         {
@@ -144,15 +147,20 @@ def _request_identification(session: PronoteSession, username: str) -> tuple[str
             "identifiant": username,
             "informationsAppareil": None,
             "loginTokenSAV": "",
-            "pourENT": False,
+            "pourENT": for_ent,
             "uuidAppliMobile": "",
         },
     )
     return data["challenge"], data.get("alea", "") or ""
 
 
-def _authenticate(session: PronoteSession, username: str, password: str, challenge_hex: str, seed: str) -> None:
-    solution = crypto.solve_challenge_session(session.aes, challenge_hex, username, password, seed)
+def _authenticate(session: PronoteSession, challenge_hex: str, temp_key: str) -> None:
+    """
+    Answer the challenge and install the final session key. `temp_key` is the
+    key material derived from the credentials (`crypto.generate_temp_key` for
+    password logins, `crypto.generate_ent_key` for ENT logins).
+    """
+    solution = crypto.solve_challenge_with_key(session.aes, challenge_hex, temp_key)
 
     data = session.post(
         "Authentification",
@@ -165,9 +173,99 @@ def _authenticate(session: PronoteSession, username: str, password: str, challen
         )
 
     # Re-applies the temporary key to decrypt 'cle', like Authenticator.authenticate
-    temp_key = crypto.generate_temp_key(username, password, seed)
     session.aes.set_key(temp_key.encode())
     decrypted = session.aes.decrypt_hex(data["cle"]).decode()
 
     final_key_bytes = bytes(int(x) for x in decrypted.split(","))
     session.aes.set_key(final_key_bytes)
+
+
+# --- ENT / CAS login -----------------------------------------------------------
+
+def _split_page_url(url: str) -> tuple[str, str, str]:
+    """
+    "https://host/pronote/eleve.html?login=true" ->
+    ("https://host/pronote", "eleve.html", "https://host/pronote/eleve.html").
+    """
+    parsed = urlparse(url.strip())
+    segments = [seg for seg in parsed.path.split("/") if seg]
+    if not parsed.netloc or not segments or not segments[-1].lower().endswith(".html"):
+        raise ValueError(
+            "Expected the direct URL of a workspace page, "
+            "e.g. https://host/pronote/eleve.html (not the PRONOTE root)."
+        )
+    page = segments[-1]
+    root = f"{parsed.scheme}://{parsed.netloc}" + "".join(f"/{seg}" for seg in segments[:-1])
+    return root, page, f"{root}/{page}"
+
+
+def _workspace_type_from_page(page: str) -> Optional[int]:
+    name = page.lower().removesuffix(".html").removeprefix("mobile.")
+    space = constants.WORKSPACE_PAGES.get(name)
+    return int(space) if space is not None else None
+
+
+def login_ent(
+    url: str,
+    username: str = "",
+    password: str = "",
+    *,
+    ent: Optional[EntProvider] = None,
+    cookies: Optional[Any] = None,
+    workspace_type: Optional[int] = None,
+) -> PronoteSession:
+    """
+    Log in through an ENT (school portal / CAS single sign-on).
+
+    `url` is the direct URL of the workspace page, e.g.
+    `https://0000000a.index-education.net/pronote/eleve.html` (a trailing
+    `?login=true` is ignored). The ENT session can come from three places:
+
+    - `cookies=`: cookies you obtained yourself (works for any ENT, including
+      EduConnect/SAML ones - log in with a browser and export them);
+    - `ent=`: an `EntProvider` that logs in with `username`/`password` (see
+      `upnote.ent`);
+    - neither: if the instance advertises a CAS server in InfoMobileApp.json,
+      a generic form-based CAS login is attempted.
+
+    Once PRONOTE accepts the ENT session it hands out two one-time values,
+    `e` and `f`, which act as the identifier and password for the usual
+    challenge exchange (`pourENT` set to true).
+    """
+    if cookies is not None and ent is not None:
+        raise ValueError("Pass either cookies= or ent=, not both.")
+
+    root, page, page_url = _split_page_url(url)
+
+    resolved_type = workspace_type if workspace_type is not None else _workspace_type_from_page(page)
+    if resolved_type is None:
+        raise ValueError(f"Cannot tell the workspace type from {page!r}: pass workspace_type=.")
+
+    if cookies is None:
+        if not (username and password):
+            raise ValueError("username and password are required unless cookies= is given.")
+        if ent is None:
+            instance = Instance.create_from_url(root)
+            if instance.cas is None:
+                raise PronoteError(
+                    "This instance does not advertise a CAS server. Pass ent= (an EntProvider) "
+                    "or cookies= obtained from your ENT."
+                )
+            ent = cas_provider(instance.cas.url)
+        cookies = ent(username, password, pronote_url=page_url)
+
+    workspace = Workspace(delegated=False, url=page, name=page, type=resolved_type)
+    session = PronoteSession.create(root, workspace, mobile=False, cookies=cookies)
+
+    e, f = session.attributes.get("e"), session.attributes.get("f")
+    if not e or not f:
+        raise PronoteError(
+            "PRONOTE did not return the ENT identifiers ('e' and 'f') - the ENT session was not "
+            "accepted, or this instance does not use that ENT."
+        )
+
+    session.settings = _load_settings(session)
+    challenge_hex, _ = _request_identification(session, e, for_ent=True)
+    _authenticate(session, challenge_hex, crypto.generate_ent_key(f))
+
+    return session

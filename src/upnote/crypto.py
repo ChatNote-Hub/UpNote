@@ -193,13 +193,28 @@ def generate_temp_key(username: str, password: str, seed: str) -> str:
 _SINGLE_AES_BLOCK = 16
 
 
-def solve_challenge_session(aes: AESSession, challenge_hex: str, username: str, password: str, seed: str) -> str:
+def generate_ent_key(f: str) -> str:
     """
-    "Session" version of solve_challenge, mirroring Blocksnote's
-    Challenge.solve: uses the session's current iv, derives a temporary key
-    from the password, solves the challenge, then resets the key (it will
-    be derived again right after, from the password, to decrypt 'cle' in
-    the Authentification response).
+    Key material for ENT logins: upper(hex(sha256(f))), where `f` is the
+    one-time value PRONOTE puts in the page's onload attributes after a
+    successful ENT/CAS authentication. Unlike the password login there is
+    no username prefix and no alea. Mirrors pronotepy's `_login`.
+    """
+    return hashlib.sha256(str(f).encode()).hexdigest().upper()
+
+
+def solve_challenge_session(aes: AESSession, challenge_hex: str, username: str, password: str, seed: str) -> str:
+    """Password-login challenge: derive the temporary key, then `solve_challenge_with_key`."""
+    return solve_challenge_with_key(aes, challenge_hex, generate_temp_key(username, password, seed))
+
+
+def solve_challenge_with_key(aes: AESSession, challenge_hex: str, temp_key: str) -> str:
+    """
+    Solve the login challenge with an already-derived temporary key
+    (`generate_temp_key` for password logins, `generate_ent_key` for ENT
+    logins), mirroring Blocksnote's Challenge.solve: uses the session's
+    current iv, then resets the key (the caller derives it again right
+    after, to decrypt 'cle' in the Authentification response).
 
     Handles TWO challenge formats, auto-detected:
 
@@ -222,7 +237,6 @@ def solve_challenge_session(aes: AESSession, challenge_hex: str, username: str, 
     outright wrong key still produces valid-looking PKCS7 padding by chance
     about 1 time in 256.
     """
-    temp_key = generate_temp_key(username, password, seed)
     aes.set_key(temp_key.encode())
 
     challenge_bytes = bytes.fromhex(challenge_hex)

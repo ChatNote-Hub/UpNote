@@ -16,17 +16,22 @@ Public API:
 
 See the README for a quick start and docs/PROTOCOL.md for the protocol write-up.
 """
-from .client import CAS, Instance, login
+from .client import CAS, Instance, login, login_ent
 from .constants import NOTSpace
+from .ent import EntLoginError, EntProvider, cas_provider
 from .session import PronoteError as UpNoteError
 from .session import PronoteSession, Workspace
 from .timetable import Detention, Lesson, TimeSlot, TimetableDay, get_timetable, group_by_day
 from .user import Resource, User, get_user
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "login",
+    "login_ent",
+    "cas_provider",
+    "EntProvider",
+    "EntLoginError",
     "get_user",
     "get_timetable",
     "group_by_day",

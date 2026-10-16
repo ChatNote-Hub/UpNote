@@ -259,3 +259,55 @@ Not ported yet: the `excluded` flag (Blocksnote derives it from the
 `absences.joursCycle` exclusions, but its day-index expression has an
 operator-precedence quirk, so it is left out until verified live).
 
+## 10. ENT / CAS login
+
+Schools whose PRONOTE sits behind an ENT (school portal) authenticate through
+a CAS single sign-on instead of PRONOTE's own password check. Sources: the
+`pronotepy` protocol notes and its `_login` code; Blocksnote only reads the CAS
+info and always sends `pourENT: false`, so there is no second implementation
+to cross-check against.
+
+**Where to find out whether an instance uses a CAS**: `InfoMobileApp.json`
+(see section 1) carries `CAS: {actif, casURL, jetonCAS}`. UpNote reads
+`actif` and `casURL`; the purpose of `jetonCAS` is not documented anywhere
+we found, so it is ignored.
+
+**Flow**
+
+1. Authenticate against the ENT/CAS and keep the cookies (single sign-on
+   cookie, usually `TGC`). This step is ENT-specific.
+2. `GET <root>/<workspace>.html` **with those cookies**, using the regular
+   desktop page (not the `mobile.*` one) and a desktop User-Agent, which is
+   what pronotepy does. PRONOTE bounces through the CAS, gets a ticket, and
+   returns its page, whose `Start({...})` attributes now include two extra
+   values, `e` and `f`. Without valid cookies it returns the CAS login page
+   instead, so there is no `Start(` call to parse. (A direct login with
+   `?login=true` is the opposite: it stops PRONOTE from redirecting to the ENT.)
+3. `FonctionParametres` as usual.
+4. `Identification` with `pourENT: true` and **`identifiant` set to `e`**.
+5. The key material for the challenge is **`upper(hex(sha256(f)))`** - the
+   hash of `f` alone: no username prefix and no `alea`, unlike the password
+   login. The challenge itself is solved exactly as in section 5, including
+   the 2026-09-02 single-block format.
+6. `Authentification`, then decrypt `cle` with the same key material, as usual.
+
+**What UpNote automates**: step 1 for ENTs whose login page is a plain CAS form
+(`upnote.ent.cas_login`: GET `<cas>/login?service=...`, fill the form's
+username/password fields, keep its hidden fields such as `execution`, POST
+without following the redirect, treat a redirect as success and a returned
+login form as failure). Everything else is a provider
+(`upnote.ent.EntProvider`) or cookies you supply.
+
+**Known gaps**
+
+- ENTs that hand the login to EduConnect/SAML (a common setup), or that add a
+  captcha or a second factor, are not covered by the generic CAS helper: they
+  need a dedicated provider, or browser cookies passed to `login_ent(cookies=...)`.
+- The `service` URL sent to the CAS defaults to the PRONOTE root
+  (`https://host/pronote/`), which is what an existing ENT helper was seen
+  targeting. A CAS that only accepts another service URL needs
+  `cas_provider(..., service=...)`.
+- Not verified against a live ENT. The official demo has no CAS
+  (`CAS.actif` is false), so this flow is covered by offline tests that mirror
+  pronotepy's behaviour, not by a real exchange.
+

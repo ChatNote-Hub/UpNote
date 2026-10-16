@@ -2,8 +2,31 @@
 
 All notable changes to UpNote. Newest first.
 
+## [0.3.0]
+
+- **Added** ENT / CAS login: `login_ent(url, username, password)` for
+  instances that advertise a CAS server, `login_ent(url, cookies=...)` for any
+  ENT whose cookies you already have, and `login_ent(url, ..., ent=provider)`
+  for custom ENT helpers. New `upnote.ent` package with the `EntProvider`
+  contract, `cas_login` / `cas_provider` (a generic form-based CAS login,
+  standard library only) and `EntLoginError`. See
+  [the protocol notes](docs/PROTOCOL.md) and `examples/ent_login.py`.
+- **Added** `crypto.generate_ent_key` and `crypto.solve_challenge_with_key`;
+  `solve_challenge_session` is now a thin wrapper over the latter.
+- **Added** `PronoteSession.create(..., mobile=False, cookies=...)` and
+  `session.attributes` (the raw `Start({...})` values, where ENT logins find
+  `e` and `f`).
+- **Not verified live**: the official demo has no CAS, so this feature is
+  covered by offline tests only. See Known limitations in the README.
+
 ## [0.2.0]
 
+- **Verified live** on the official demo (PRONOTE 2026.2.7, student
+  workspace): `get_user` and `get_timetable` return real data. The demo's
+  week of 2026-10-05 has every lesson cancelled with the status
+  "Classe absente" (`estAnnule` is a real boolean `True`), which is demo
+  data, not a parsing issue. `examples/timetable.py` now prints the status
+  next to `[CANCELED]`.
 - **Added** the first data endpoint: the timetable (`get_timetable`,
   `PageEmploiDuTemps`), with `Lesson` / `Detention` models, per-day grouping
   and a `get_user` helper that returns the user's own resource. See

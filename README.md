@@ -10,9 +10,9 @@ two existing implementations ([`pronotepy`](https://github.com/bain3/pronotepy)
 and [`Blocksnote`](https://github.com/BlocksHub/Blocksnote)).
 
 > **Status: alpha.** Username/password login works end to end against the
-> official demo instance (PRONOTE 2026.2.7). The timetable endpoint is
-> implemented and unit-tested offline, but has not been run against a live
-> server yet. See [Known limitations](#known-limitations).
+> official demo instance (PRONOTE 2026.2.7), and so does the timetable
+> endpoint. ENT / CAS login is implemented but could not be tested against a
+> real ENT yet. See [Known limitations](#known-limitations).
 
 ## Features
 
@@ -20,6 +20,7 @@ and [`Blocksnote`](https://github.com/BlocksHub/Blocksnote)).
 |---|---|
 | Instance discovery | list the workspaces (student, parent, teacher, ...) of an instance |
 | Login | username/password, including the PRONOTE >= 2026.2.5 challenge change |
+| ENT / CAS login | through a school portal: generic CAS form login, your own ENT helper, or browser cookies |
 | Timetable | lessons and detentions, by school week or date range, grouped by day |
 | Low-level access | `session.post(function, data)` for any other PRONOTE function |
 
@@ -59,6 +60,23 @@ for day in group_by_day(slots):
         print(f"  {slot.start:%H:%M}-{slot.end:%H:%M} {slot.subject}")
 ```
 
+If your school logs in through an ENT (a school portal), use the direct URL of
+the workspace page:
+
+```python
+from upnote import login_ent
+
+# the instance advertises a plain CAS server: username and password are enough
+session = login_ent("https://0000000a.index-education.net/pronote/eleve.html", "jdupont", "password")
+
+# any other ENT (EduConnect, SAML, captcha...): reuse the cookies of a browser login
+session = login_ent("https://0000000a.index-education.net/pronote/eleve.html",
+                    cookies={"TGC": "..."})
+```
+
+Cookies are as sensitive as a password: never commit them. To support a specific
+ENT, write an `EntProvider` (one function, see [`docs/PROTOCOL.md`](docs/PROTOCOL.md)).
+
 Anything not wrapped yet is one call away:
 
 ```python
@@ -76,6 +94,7 @@ Every call can raise `upnote.UpNoteError`.
 | [`basic_login.py`](examples/basic_login.py) | yes | a full login |
 | [`custom_request.py`](examples/custom_request.py) | yes | login, then a raw `session.post(...)` |
 | [`timetable.py`](examples/timetable.py) | yes | the current week's timetable, or a given week number |
+| [`ent_login.py`](examples/ent_login.py) | yes, plus an ENT account | login through an ENT, with credentials or cookies |
 
 ## Documentation
 
@@ -93,7 +112,8 @@ UpNote/
 │   ├── crypto.py        AES / RSA, key and IV derivation, challenge solving
 │   ├── parsing.py       typed values (_T/V, L/N, dates, number sets), both directions
 │   ├── session.py       PronoteSession: HTTP, request/response encoding
-│   ├── client.py        instance discovery and login
+│   ├── client.py        instance discovery, login, ENT login
+│   ├── ent/             ENT / CAS helpers (EntProvider contract, generic CAS form login)
 │   ├── user.py          the logged-in user and their resource
 │   └── timetable.py     PageEmploiDuTemps
 ├── tests/               offline tests, one file per module
@@ -117,20 +137,28 @@ pytest
 ```
 
 The test files also run directly, without pytest: `python3 tests/test_crypto.py`.
-All 38 tests are offline: HTTP is mocked.
+All 58 tests are offline: HTTP is mocked.
 
 ## Known limitations
 
-- **Timetable not verified live.** Its request and response handling follow
-  Blocksnote and are covered by offline tests only. Run
-  `examples/timetable.py` and report what you get.
+- **Timetable verified on the demo only, and only on cancelled lessons.**
+  The demo returned a full week where every lesson is cancelled (status
+  "Classe absente"), so the request, signature, dates and durations are
+  confirmed live, but the non-cancelled lesson and detention paths are
+  covered by offline tests only.
 - **Encryption and compression are unverified live.** The demo instance has
   both turned off (`sCrA`/`sCoA` false), so only the plain-text path has met
   a real server. The encrypted/compressed paths are covered by mocked tests.
 - **Only the student workspace has been exercised.** Parent, teacher and
   other spaces use code paths ported from Blocksnote but never run.
-- **Login:** username/password only (no QR code, ENT/CAS or app-token login).
-  The `modeCompLog`/`modeCompMdp` flags are ignored, as in Blocksnote.
+- **ENT / CAS login is not verified live.** The official demo has no CAS, so
+  the flow is covered by offline tests that mirror pronotepy's behaviour, not by
+  a real exchange. Please try it on your school's ENT and report what happens.
+  The generic CAS helper only handles plain CAS login forms; ENTs that go
+  through EduConnect/SAML, a captcha or a second factor need a dedicated
+  provider or browser cookies (see [`docs/PROTOCOL.md`](docs/PROTOCOL.md)).
+- **Login modes:** username/password and ENT only (no QR code or app-token
+  login). The `modeCompLog`/`modeCompMdp` flags are ignored, as in Blocksnote.
 - **2026 challenge detection** ("exactly one AES block") rests on one
   confirmed real-world fix. If login fails with a padding error on some
   instance, start there. Details in [`docs/PROTOCOL.md`](docs/PROTOCOL.md).

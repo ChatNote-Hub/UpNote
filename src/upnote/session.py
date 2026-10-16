@@ -40,16 +40,32 @@ class PronoteSession:
     A session opened on a PRONOTE instance (after the initial GET request).
     """
 
-    def __init__(self, source: str, workspace: Workspace):
+    def __init__(
+        self,
+        source: str,
+        workspace: Workspace,
+        *,
+        mobile: bool = True,
+        cookies: Optional[Any] = None,
+    ):
         self.source = source.rstrip("/")
         self.workspace = workspace
+        self.mobile = mobile
 
         self.http = requests.Session()
-        self.http.headers.update({"User-Agent": constants.USER_AGENT})
+        self.http.headers.update(
+            {"User-Agent": constants.USER_AGENT if mobile else constants.DESKTOP_USER_AGENT}
+        )
+        if cookies is not None:
+            # e.g. the SSO cookies of an ENT login (see upnote.ent)
+            self.http.cookies.update(cookies)
 
         self.aes = crypto.AESSession()
 
         self.session_id: Optional[str] = None
+        # Raw key/value pairs from the page's Start({...}) onload call. ENT
+        # logins need "e" and "f" from here.
+        self.attributes: dict[str, str] = {}
         self.use_compression = False
         self.use_encryption = False
         self.use_https = True
@@ -63,10 +79,27 @@ class PronoteSession:
     # --- Step 1: opening a session ---------------------------------------
 
     @classmethod
-    def create(cls, source: str, workspace: Workspace) -> "PronoteSession":
-        session = cls(source, workspace)
+    def create(
+        cls,
+        source: str,
+        workspace: Workspace,
+        *,
+        mobile: bool = True,
+        cookies: Optional[Any] = None,
+    ) -> "PronoteSession":
+        """
+        Open a session by fetching the workspace page.
 
-        endpoint = f"{session.source.rstrip('/')}/{workspace.url.lstrip('/')}?fd=1&bydlg={constants.BYPASS_ID}"
+        `mobile=True` (default) uses the mobile page from InfoMobileApp.json
+        with the app's extra query parameters. `mobile=False` fetches the plain
+        desktop page with a desktop User-Agent, which is what ENT logins use.
+        `cookies` seeds the HTTP session (ENT/CAS single sign-on cookies).
+        """
+        session = cls(source, workspace, mobile=mobile, cookies=cookies)
+
+        endpoint = f"{session.source.rstrip('/')}/{workspace.url.lstrip('/')}"
+        if mobile:
+            endpoint += f"?fd=1&bydlg={constants.BYPASS_ID}"
         response = session.http.get(endpoint)
         response.raise_for_status()
         text = response.text
@@ -74,9 +107,15 @@ class PronoteSession:
         # The body contains <... onload="Start({h:'...',sCrA:true,sCoA:true,a:6,...})">
         match = re.search(r"Start\s*\(\{([^}]*)\}\)", text)
         if not match:
+            hint = (
+                " The ENT session cookies are probably missing or expired (PRONOTE"
+                " sent back a login page instead of its own)."
+                if cookies is not None
+                else ""
+            )
             raise PronoteError(
                 "Unable to parse the HTML page. Make sure the URL points "
-                "directly to a workspace (eleve.html, parent.html, ...)."
+                "directly to a workspace (eleve.html, parent.html, ...)." + hint
             )
 
         attrs: dict[str, str] = {}
@@ -87,6 +126,7 @@ class PronoteSession:
         if "h" not in attrs:
             raise PronoteError("Session id ('h') missing from the HTML response.")
 
+        session.attributes = attrs
         session.session_id = attrs["h"]
         session.use_encryption = attrs.get("sCrA", "false") == "true"
         session.use_compression = attrs.get("sCoA", "false") == "true"
